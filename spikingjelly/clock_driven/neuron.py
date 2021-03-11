@@ -349,3 +349,55 @@ class LIFNode(BaseNode):
             self.v += (dv - self.v) / self.tau
         else:
             self.v += (dv - (self.v - self.v_reset)) / self.tau
+
+class IQIFNode(BaseNode):
+    #def __init__(self, a=1, b=1, v_threshold=255, v_reset=64, v_unstable=128, surrogate_function=surrogate.Sigmoid(), detach_reset=False,
+    def __init__(self, a=1, b=1, v_threshold=6, v_reset=1.5, v_unstable=3, surrogate_function=surrogate.Sigmoid(), detach_reset=False,
+                 monitor_state=False):
+        '''
+        .. _LIFNode.__init__-en:
+
+        :param a: membrane recover(rest) slope.
+
+        :param b: membrane unstable slope.
+
+        :param v_threshold: threshold voltage of neurons
+        
+        :param v_unstable: unstable voltage of neurons
+
+        :param v_reset: reset voltage of neurons. If not ``None``, voltage of neurons that just fired spikes will be set to
+            ``v_reset``. If ``None``, voltage of neurons that just fired spikes will subtract ``v_threshold``
+
+        :param surrogate_function: surrogate function for replacing gradient of spiking functions during back-propagation
+
+        :param detach_reset: whether detach the computation graph of reset
+
+        :param monitor_state: whether to set a monitor to recode voltage and spikes of neurons.
+            If ``True``, ``self.monitor`` will be a dictionary with key ``h`` for recording membrane potential after charging,
+            ``v`` for recording membrane potential after firing and ``s`` for recording output spikes.
+            And the value of the dictionary is lists. To save memory, the elements in lists are ``numpy``
+            array converted from origin data. Besides, ``self.reset()`` will clear these lists in the dictionary
+
+        The Integer Quadratic Integrate-and-Fire neuron, which is the discretized version of QIF.
+        The subthreshold neural dynamics of it is as followed:
+
+        .. math::
+            \\frac{\\mathrm{d}V(t)}{\\mathrm{d}t} = a(V_{rest} - V(t)) + R_{m}I(t)
+            \\frac{\\mathrm{d}V(t)}{\\mathrm{d}t} = b(V(t) - V_{unstable}) + R_{m}I(t)
+        '''
+        super().__init__(v_threshold, v_reset, surrogate_function, detach_reset, monitor_state)
+        self.a = a
+        self.b = b
+        self.unstable = v_unstable
+        self.f_min = (a * v_reset + b * v_unstable) / (a + b)
+        self.ss = v_unstable / 1024     # slope smoother
+
+    def extra_repr(self):
+        return f'v_threshold={self.v_threshold}, v_reset={self.v_reset}'
+
+    def neuronal_charge(self, dv: torch.Tensor):
+        self.v += torch.where(torch.tensor(self.v < self.f_min, device=dv.device),
+                              (self.a * (self.v_reset - self.v)) * self.ss + dv,
+                              (self.b * (self.v - self.unstable)) * self.ss + dv)
+        self.v *= self.v >= 0
+
